@@ -61,23 +61,26 @@ bool MergingPipeline::estimateTransforms(FeatureType feature_type,
       cv::makePtr<cv::detail::AffineBasedEstimator>();
   cv::Ptr<cv::detail::BundleAdjusterBase> adjuster =
       cv::makePtr<cv::detail::BundleAdjusterAffinePartial>();
-
+  //这里的images_其实也不是图片，而是矩阵表示的grids的信息
   if (images_.empty()) {
     return true;
   }
 
   /* find features in images */
+  //计算订阅的topic的数据image的特征
   ROS_DEBUG("computing features");
   image_features.reserve(images_.size());
   for (const cv::Mat& image : images_) {
     image_features.emplace_back();
     if (!image.empty()) {
+      //检索，存储在image_features中
       (*finder)(image, image_features.back());
     }
   }
   finder->collectGarbage();
 
-  /* find corespondent features */
+  /* find correspondent features */
+  //特征匹配,存储在pairwise_matches中的是两张匹配图片的信息
   ROS_DEBUG("pairwise matching features");
   (*matcher)(image_features, pairwise_matches);
   matcher->collectGarbage();
@@ -88,12 +91,14 @@ bool MergingPipeline::estimateTransforms(FeatureType feature_type,
 
   /* use only matches that has enough confidence. leave out matches that are not
    * connected (small components) */
+  //其实就是并查集，找出所有匹配的置信度最高的matches，match
   good_indices = cv::detail::leaveBiggestComponent(
       image_features, pairwise_matches, static_cast<float>(confidence));
 
   // no match found. try set first non-empty grid as reference frame. we try to
   // avoid setting empty grid as reference frame, in case some maps never
   // arrive. If all is empty just set null transforms.
+  //如果没有匹配到，就直接设置非空的grid作为参考帧
   if (good_indices.size() == 1) {
     transforms_.clear();
     transforms_.resize(images_.size());
@@ -108,6 +113,8 @@ bool MergingPipeline::estimateTransforms(FeatureType feature_type,
   }
 
   /* estimate transform */
+  //计算匹配的match的转换
+  //这里transform指的应该是不同坐标系之间转换矩阵，不是之前的初始矩阵
   ROS_DEBUG("calculating transforms in global reference frame");
   // note: currently used estimator never fails
   if (!(*estimator)(image_features, pairwise_matches, transforms)) {
@@ -116,6 +123,8 @@ bool MergingPipeline::estimateTransforms(FeatureType feature_type,
 
   /* levmarq optimization */
   // openCV just accepts float transforms
+  //上面是孤立的两张img之间的优化，这里进行集体优化
+  //可以发现transforms类型与transforms_是不同的，需要转化
   for (auto& transform : transforms) {
     transform.R.convertTo(transform.R, CV_32F);
   }
@@ -131,6 +140,7 @@ bool MergingPipeline::estimateTransforms(FeatureType feature_type,
   size_t i = 0;
   for (auto& j : good_indices) {
     // we want to work with transforms as doubles
+    //把transform优化转化之后存储在transforms_中
     transforms[i].R.convertTo(transforms_[static_cast<size_t>(j)], CV_64F);
     ++i;
   }
@@ -139,6 +149,7 @@ bool MergingPipeline::estimateTransforms(FeatureType feature_type,
 }
 
 // checks whether given matrix is an identity, i.e. exactly appropriate Mat::eye
+//检查是否是单应矩阵
 static inline bool isIdentity(const cv::Mat& matrix)
 {
   if (matrix.empty()) {
@@ -156,16 +167,22 @@ nav_msgs::OccupancyGrid::Ptr MergingPipeline::composeGrids()
   if (images_.empty()) {
     return nullptr;
   }
-
+  //grids_就只是地图类型的指针，等价于grids，包含所有msg的信息
+  //images_其实就是Mat类型-height，width，占用地图0,1，-1
   ROS_DEBUG("warping grids");
   internal::GridWarper warper;
   std::vector<cv::Mat> imgs_warped;
+  //imgs_warped-类似变换的image
   imgs_warped.reserve(images_.size());
+  //roi-感兴趣的区域，矩形
   std::vector<cv::Rect> rois;
   rois.reserve(images_.size());
   //images+transform，之前transform只是转换了一下，warp
   for (size_t i = 0; i < images_.size(); ++i) {
     if (!transforms_[i].empty() && !images_[i].empty()) {
+      //这里加空格，是因为imgs_warped其实也是输出，结果是类似变换的图片--height,width,0,-1,1（value）
+      //warper输出其实是roi，rois存储所有的图片映射到的感兴趣区域
+      //把感兴趣的区域都计算出来
       imgs_warped.emplace_back();
       rois.emplace_back(
           warper.warp(images_[i], transforms_[i], imgs_warped.back()));
@@ -179,11 +196,13 @@ nav_msgs::OccupancyGrid::Ptr MergingPipeline::composeGrids()
   ROS_DEBUG("compositing result grid");
   nav_msgs::OccupancyGrid::Ptr result;
   internal::GridCompositor compositor;
+  //imgs_warped是包含映射后数据的数组，rois是包含映射后感兴趣区域的数组
   result = compositor.compose(imgs_warped, rois);
 
   // set correct resolution to output grid. use resolution of identity (works
   // for estimated trasforms), or any resolution (works for know_init_positions)
   // - in that case all resolutions should be the same.
+  //设置分辨率
   float any_resolution = 0.0;
   for (size_t i = 0; i < transforms_.size(); ++i) {
     // check if this transform is the reference frame

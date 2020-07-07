@@ -40,23 +40,31 @@
 
 #include <ros/assert.h>
 
+
+//在得到相机的相对位置，如果直接进行拼接会破坏视场的一致性，使得拼接得到的全景图看起来不够连贯，因此需要通过投影变换
+//相对位置是在executeposeEstimation中实现的
 namespace combine_grids
 {
 namespace internal
 {
+  //有点像裁剪大小，分类，grid-images_，roi其实只有感兴趣的区域-corner,height,width
 cv::Rect GridWarper::warp(const cv::Mat& grid, const cv::Mat& transform,
                           cv::Mat& warped_grid)
 {
   ROS_ASSERT(transform.type() == CV_64F);
   cv::Mat H;
+  //求逆矩阵
   invertAffineTransform(transform.rowRange(0, 2), H);
+  //先映射roi-rect(x, y, width, height)，再映射grid到warped_grid-width,height,value
   cv::Rect roi = warpRoi(grid, H);
   // shift top left corner for warp affine (otherwise the image is cropped)
   H.at<double>(0, 2) -= roi.tl().x;
   H.at<double>(1, 2) -= roi.tl().y;
+  //仿射变换-grid 输入,其实是images_；warped_grid 输出；H 变换矩阵,单应矩阵，计算图片之间的变化
+  //这时候warped_grid-heigth.width,0,-1,1
   warpAffine(grid, warped_grid, H, roi.size(), cv::INTER_NEAREST,
              cv::BORDER_CONSTANT,
-             cv::Scalar::all(255) /* this is -1 for signed char */);
+             cv::Scalar::all(255) /* this is -1 for signed char */);//border value
   ROS_ASSERT(roi.size() == warped_grid.size());
 
   return roi;
@@ -64,13 +72,16 @@ cv::Rect GridWarper::warp(const cv::Mat& grid, const cv::Mat& transform,
 
 cv::Rect GridWarper::warpRoi(const cv::Mat& grid, const cv::Mat& transform)
 {
+  //返回的应该是roi
   cv::Ptr<cv::detail::PlaneWarper> warper =
       cv::makePtr<cv::detail::PlaneWarper>();
   cv::Mat H;
+  //格式
   transform.convertTo(H, CV_32F);
 
   // separate rotation and translation for plane warper
   // 3D translation
+  //把transform的Mat格式CV_64F转化为CV_32F，存入H，然后分为R和T
   cv::Mat T = cv::Mat::zeros(3, 1, CV_32F);
   H.colRange(2, 3).rowRange(0, 2).copyTo(T.rowRange(0, 2));
   // 3D rotation

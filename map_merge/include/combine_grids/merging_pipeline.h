@@ -52,6 +52,7 @@ enum class FeatureType { AKAZE, ORB, SURF };
  * @brief Pipeline for merging overlapping occupancy grids
  * @details Pipeline works on internally stored grids.
  */
+//grids_是这个类型的指针，images_是mat
 class MergingPipeline
 {
 public:
@@ -72,6 +73,7 @@ private:
 };
 
 template <typename InputIt>
+//grids_ readonly map
 void MergingPipeline::feed(InputIt grids_begin, InputIt grids_end)
 {
   static_assert(std::is_assignable<nav_msgs::OccupancyGrid::ConstPtr&,
@@ -81,6 +83,9 @@ void MergingPipeline::feed(InputIt grids_begin, InputIt grids_end)
 
   // we can't reserve anything, because we want to support just InputIt and
   // their guarantee validity for only single-pass algos
+  //需要清空
+  //readonly_map,girds_应该是存储所有的东西，等于是复制了grids；
+  //只有images，才是只存储height，width，所有占用地图的0，1，-1数值
   images_.clear();
   grids_.clear();
   for (InputIt it = grids_begin; it != grids_end; ++it) {
@@ -115,6 +120,7 @@ bool MergingPipeline::setTransforms(InputIt transforms_begin,
       transforms_buf.emplace_back();
       continue;
     }
+    //四元数转化
     double s = 2.0 / (q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
     double a = 1 - q.y * q.y * s - q.z * q.z * s;
     double b = q.x * q.y * s + q.z * q.w * s;

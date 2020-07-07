@@ -97,7 +97,7 @@ void MapMerge::topicSubscribing()
       // we already know this robot
       continue;
     }
-    //判断是否有初始化位姿
+    //判断是否有初始化位姿，其实就是位姿，一般都是有的
     if (have_initial_poses_ && !getInitPose(robot_name, init_pose)) {
       ROS_WARN("Couldn't get initial position for robot [%s]\n"
                "did you defined parameters map_merge/init_pose_[xyz]? in robot "
@@ -151,12 +151,14 @@ void MapMerge::topicSubscribing()
 /*
  * mapMerging()
  */
+//注意，这里并不是建图，而是融合，如果初始位姿知道了，那就不需要，看数据类型，好像也是两个坐标系之间的变换
 void MapMerge::mapMerging()
 {
   ROS_DEBUG("Map merging started.");
 
   if (have_initial_poses_) {
-    //共享锁，在grids和transform中插入数据,防止数据更新之类的
+    //共享锁，subscriptions在grids和transform中插入数据,防止数据更新之类的
+    //这个在poseEstimation也有
     std::vector<nav_msgs::OccupancyGridConstPtr> grids;
     std::vector<geometry_msgs::Transform> transforms;
     grids.reserve(subscriptions_size_);
@@ -170,7 +172,8 @@ void MapMerge::mapMerging()
     }
     // we don't need to lock here, because when have_initial_poses_ is true we
     // will not run concurrently on the pipeline
-    //pipeline读取grids的readonly数据，以及所有位姿,其实feed是将grids数据转化为image（opencv模式）
+    //pipeline读取grids的readonly数据，以及所有位姿,其实feed是将grids数据转化为image（opencv模式），settransform也是一样的
+    //这里有锁，所以即使里面的变量修改了也一样
     pipeline_.feed(grids.begin(), grids.end());
     pipeline_.setTransforms(transforms.begin(), transforms.end());
   }
@@ -341,7 +344,7 @@ bool MapMerge::isRobotMapTopic(const ros::master::TopicInfo& topic)
 /*
  * Get robot's initial position
  */
-//获取机器人的初始位姿
+//获取机器人的初始位姿，其实感觉是
 bool MapMerge::getInitPose(const std::string& name,
                            geometry_msgs::Transform& pose)
 {
@@ -388,6 +391,7 @@ void MapMerge::executetopicSubscribing()
 
 void MapMerge::executeposeEstimation()
 {
+  //这个就有点意思，其实就是只有没有初始位姿才需要通过特征点匹配去做，这里不需要，一般都是有的
   if (have_initial_poses_)
     return;
 

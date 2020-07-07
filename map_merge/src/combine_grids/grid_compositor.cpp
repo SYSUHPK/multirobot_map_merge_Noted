@@ -45,36 +45,47 @@ namespace combine_grids
 namespace internal
 {
 nav_msgs::OccupancyGrid::Ptr GridCompositor::compose(
+  //grids：所有映射后的数据，rois：所有映射后roi
     const std::vector<cv::Mat>& grids, const std::vector<cv::Rect>& rois)
 {
   ROS_ASSERT(grids.size() == rois.size());
-
+  //只有一张map,包含所有数据
   nav_msgs::OccupancyGrid::Ptr result_grid(new nav_msgs::OccupancyGrid());
-
+ //角点和size,其实就是把roi分出来
+ //corners表示左上角坐标数组
+ //grids-height,width,value
   std::vector<cv::Point> corners;
   corners.reserve(grids.size());
   std::vector<cv::Size> sizes;
   sizes.reserve(grids.size());
+  //输入所有图像roi的左上角和size-x,y,height,width
   for (auto& roi : rois) {
     corners.push_back(roi.tl());
     sizes.push_back(roi.size());
   }
+  //计算出全景图大小
   cv::Rect dst_roi = cv::detail::resultRoi(corners, sizes);
 
   result_grid->info.width = static_cast<uint>(dst_roi.width);
   result_grid->info.height = static_cast<uint>(dst_roi.height);
   result_grid->data.resize(static_cast<size_t>(dst_roi.area()), -1);
   // create view for opencv pointing to newly allocated grid
+  //这里result_grid包含数据,并将result的所有数值初始化为result_grid
+  //注意这里的构造函数，是共享内存的，所以下面看似是在修改别的，实际上自身也发生了变化
   cv::Mat result(dst_roi.size(), CV_8S, result_grid->data.data());
 
+  
   for (size_t i = 0; i < grids.size(); ++i) {
     // we need to compensate global offset
+    //每一个roi
     cv::Rect roi = cv::Rect(corners[i] - dst_roi.tl(), sizes[i]);
+    //转换后的map一张张贴进去，访问result的roi区域
     cv::Mat result_roi(result, roi);
     // reinterpret warped matrix as signed
     // we will not change this matrix, but opencv does not support const matrices
+    //把grids的value进行填充（0,-1,1），其实就是images_
     cv::Mat warped_signed (grids[i].size(), CV_8S, const_cast<uchar*>(grids[i].ptr()));
-    // compose img into result matrix
+    // compose img into result matrix，不断选最大的
     cv::max(result_roi, warped_signed, result_roi);
   }
 
